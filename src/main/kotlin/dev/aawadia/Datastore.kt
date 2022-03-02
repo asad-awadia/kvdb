@@ -4,27 +4,31 @@ import jetbrains.exodus.ArrayByteIterable
 import jetbrains.exodus.bindings.StringBinding
 import jetbrains.exodus.env.*
 import jetbrains.exodus.util.CompressBackupUtil
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.charset.StandardCharsets.UTF_8
 import java.util.concurrent.ConcurrentSkipListMap
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 
 class Datastore(
   private val dbDir: String = "./db",
-  private val ssdtable: Environment = Environments.newInstance(dbDir, getEnvConfig()),
-  private val memtable: ConcurrentSkipListMap<String, String> = ConcurrentSkipListMap(),
   private val store: String = "datastore",
+  private val ssdtable: Environment = Environments.newInstance(dbDir, getEnvConfig()),
+  private val memtable: ConcurrentSkipListMap<String, ByteArray> = ConcurrentSkipListMap()
 ) {
   init {
     populateMemtable()
   }
 
-  fun get(key: String): String = memtable[key] ?: ""
-  fun getKeyRange(from: String, to: String) = memtable.subMap(from, to) ?: emptyMap()
+  fun get(key: String): String = memtable[key]?.ungzip() ?: ""
+  fun getKeyRange(from: String, to: String) = memtable.subMap(from, to).mapValues { it.value.ungzip() }
 
   fun insert(key: String, value: String) {
     ssdtable.executeInTransaction {
       getStore(it).put(it, key.toByteIterable(), value.toByteIterable())
     }
-    memtable[key] = value
+    memtable[key] = value.gzip()
   }
 
   fun delete(key: String) {
@@ -47,11 +51,11 @@ class Datastore(
   }
 
   private fun populateMemtable() {
-    memtable["init.ts"] = System.currentTimeMillis().toString()
+    memtable["init.ts"] = System.currentTimeMillis().toString().gzip()
     ssdtable.executeInTransaction {
       getStore(it).openCursor(it).use { cursor ->
         while (cursor.next) {
-          memtable[StringBinding.entryToString(cursor.key)] = StringBinding.entryToString(cursor.value)
+          memtable[StringBinding.entryToString(cursor.key)] = StringBinding.entryToString(cursor.value).gzip()
         }
       }
     }
@@ -62,3 +66,11 @@ class Datastore(
 }
 
 private fun String.toByteIterable(): ArrayByteIterable = StringBinding.stringToEntry(this)
+
+fun String.gzip(): ByteArray {
+  val bos = ByteArrayOutputStream()
+  GZIPOutputStream(bos).bufferedWriter(UTF_8).use { it.write(this) }
+  return bos.toByteArray()
+}
+
+fun ByteArray.ungzip(): String = GZIPInputStream(this.inputStream()).bufferedReader(UTF_8).use { it.readText() }

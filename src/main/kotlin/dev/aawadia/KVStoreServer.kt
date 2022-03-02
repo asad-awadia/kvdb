@@ -2,11 +2,9 @@ package dev.aawadia
 
 import io.micrometer.prometheus.PrometheusMeterRegistry
 import io.vertx.core.AbstractVerticle
-import io.vertx.core.Future
 import io.vertx.core.http.HttpServerOptions
 import io.vertx.core.http.ServerWebSocket
 import io.vertx.core.json.JsonObject
-import io.vertx.ext.auth.authentication.TokenCredentials
 import io.vertx.ext.web.Router
 import io.vertx.ext.web.RoutingContext
 import io.vertx.ext.web.handler.*
@@ -40,7 +38,7 @@ class KVStoreServer(
 
     vertx.createHttpServer(getHttpServerOptions())
       .requestHandler(router)
-      .exceptionHandler { logger.warning(it.message) }
+      .exceptionHandler { it.printStackTrace() }
       .listen(config().getInteger("port", 9090))
       .onFailure { logger.warning(it.message) }
       .onSuccess { logger.info("server started on port " + it.actualPort()) }
@@ -50,9 +48,8 @@ class KVStoreServer(
     val response = JsonObject()
     routingContext.queryParam("keys").first()
       .split(",")
-      .forEach {
-        response.put(it, ds.get(it))
-      }
+      .forEach { response.put(it, ds.get(it)) }
+
     routingContext.response()
       .putHeader("Content-type", "application/json; charset=utf-8")
       .end(response.encodePrettily())
@@ -151,16 +148,22 @@ class KVStoreServer(
   }
 
   private fun authMiddleware(router: Router) {
-    val apiKeyAuth = apiKeyAuth()
-    router.route("/kv*").handler(apiKeyAuth)
-    router.route("/admin*").handler(apiKeyAuth)
+    router.route("/kv*").handler(this::bearerAuth)
+    router.route("/admin*").handler(this::bearerAuth)
   }
 
-  private fun apiKeyAuth(): APIKeyHandler {
-    return APIKeyHandler.create { credentials, resultHandler ->
-      val keyMatch = credentials.mapTo(TokenCredentials::class.java).token == getApiKey()
-      if (keyMatch) resultHandler.handle(Future.succeededFuture()) else resultHandler.handle(Future.failedFuture("invalid api key provided"))
+  private fun bearerAuth(routingContext: RoutingContext) {
+    if (!routingContext.request().headers().contains("Authorization")) {
+      routingContext.fail(403, IllegalAccessException())
+      return
     }
+    val authHeader = routingContext.request().getHeader("Authorization").ifEmpty { "Bearer " }
+    val split = authHeader.split("Bearer ")
+    if (split.size != 2 || split[1] != getApiKey()) {
+      routingContext.fail(403, IllegalAccessException())
+      return
+    }
+    routingContext.next()
   }
 
   private fun getApiKey(): String {

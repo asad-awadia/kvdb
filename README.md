@@ -155,5 +155,5 @@ Connect to `/ws/v1/:apiKey` to get updates about puts and deletes
 ## Auth
 
 If `enable_auth` environment variable is set then the value of `api_key` environment variable is 
-used as the api key. The api key must be passed in as the `x-api-key` header value
+used as the api key. The api key must be passed in as the `Authorization` header value with `Bearer ` as the prefix
  If `api_key` is blank then the default key is admin [`enable_auth` must still be true]
